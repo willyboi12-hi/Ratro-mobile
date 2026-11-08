@@ -1,9 +1,12 @@
+
 name: Natro Mobile Android Build
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -23,32 +26,55 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-- name: Install Android SDK
-  uses: android-actions/setup-android@v3
-  with:
-    accept-android-sdk-licenses: false
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: false
 
-- name: Accept Android SDK licenses
-  run: yes | sdkmanager --licenses
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
 
-      - name: Install Android platform
+      - name: Install Android SDK platform
         run: |
-          yes | sdkmanager --licenses
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
       - name: Extract Natro Mobile
+        shell: bash
         run: |
-          mkdir project
-          unzip -q NatroMobile-Android-Source-v1_8_0\ \(1\).zip -d project
+          set -e
+
+          ARCHIVE="$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)"
+
+          if [ -z "$ARCHIVE" ]; then
+            echo "ERROR: No source ZIP found in repository root."
+            exit 1
+          fi
+
+          mkdir -p source
+          unzip -q "$ARCHIVE" -d source
+
+          PROJECT_FILE="$(find source -type f -name build.gradle ! -path '*/app/*' -print -quit)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERROR: Could not find the Natro Mobile root build.gradle."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+
+          cp -a "$PROJECT_DIR/build.gradle" .
+          cp -a "$PROJECT_DIR/app" .
+          cp -a "$PROJECT_DIR/gradle.properties" .
+          cp -a "$PROJECT_DIR/tests" .
 
       - name: Create Gradle settings
         run: |
-          cat > project/settings.gradle <<'EOF'
+          cat > settings.gradle <<'EOF'
           pluginManagement {
               repositories {
                   google()
@@ -56,37 +82,34 @@ jobs:
                   gradlePluginPortal()
               }
           }
+
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
                   google()
                   mavenCentral()
               }
           }
+
           rootProject.name = "NatroMobile"
           include(":app")
           EOF
 
       - name: Run Java and sandbox tests
-        run: |
-          cd project
-          bash tests/run.sh
+        run: bash tests/run.sh
 
       - name: Build debug APK
-        run: |
-          gradle -p project :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug --no-daemon
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: NatroMobile-debug-APK
-          path: project/app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/*.apk
 
       - name: Upload build reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: NatroMobile-build-reports
-          path: project/**/build/reports/
+          path: build/tests/
           if-no-files-found: ignore
-          
