@@ -1,0 +1,87 @@
+name: Natro Mobile Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract Natro Mobile
+        run: |
+          mkdir project
+          unzip -q NatroMobile-Android-Source-v1_8_0\ \(1\).zip -d project
+
+      - name: Create Gradle settings
+        run: |
+          cat > project/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "NatroMobile"
+          include(":app")
+          EOF
+
+      - name: Run Java and sandbox tests
+        run: |
+          cd project
+          bash tests/run.sh
+
+      - name: Build debug APK
+        run: |
+          gradle -p project :app:assembleDebug --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NatroMobile-debug-APK
+          path: project/app/build/outputs/apk/debug/*.apk
+
+      - name: Upload build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NatroMobile-build-reports
+          path: project/**/build/reports/
+          if-no-files-found: ignore
+          
