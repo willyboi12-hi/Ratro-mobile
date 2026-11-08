@@ -22,42 +22,60 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
+      # 1. Checkout
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up Java
+      # 2. Java
+      - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      # 3. Locate Android SDK manager
       - name: Locate Android SDK manager
         shell: bash
         run: |
           set -e
 
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
-            -type f -name sdkmanager | sort -V | tail -n 1)"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
-          if [ -z "$SDKMANAGER" ]; then
+          if [ ! -x "$SDKMANAGER" ]; then
             echo "ERROR: Android SDK manager not found."
             exit 1
           fi
 
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-          echo "Found Android SDK manager: $SDKMANAGER"
 
+          echo "Android SDK manager found."
+          "$SDKMANAGER" --version
+
+      # 4. Accept and verify SDK licenses
       - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -e
 
-          echo "Accepting Android SDK licenses..."
+          echo "Processing Android SDK licenses..."
 
+          set +e
           yes | "$SDKMANAGER" --licenses
+          SDK_STATUS=${PIPESTATUS[1]}
+          set -e
 
-          echo "License command completed."
+          if [ "$SDK_STATUS" -ne 0 ]; then
+            echo "ERROR: SDK manager could not accept licenses."
+            exit "$SDK_STATUS"
+          fi
 
+          echo "Checking accepted licenses..."
+
+          "$SDKMANAGER" --licenses
+
+          echo "Android SDK license verification passed."
+
+      # 5. Install SDK packages
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -75,11 +93,13 @@ jobs:
 
           echo "Android SDK installation verified."
 
-      - name: Set up Gradle
+      # 6. Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
+      # 7. Extract source ZIP
       - name: Extract Natro Mobile source
         shell: bash
         run: |
@@ -89,7 +109,7 @@ jobs:
             -name '*.zip' -print -quit)"
 
           if [ -z "$ARCHIVE" ]; then
-            echo "ERROR: Natro Mobile source ZIP not found."
+            echo "ERROR: Source ZIP not found."
             exit 1
           fi
 
@@ -117,6 +137,7 @@ jobs:
 
           echo "Source extraction successful."
 
+      # 8. Create Gradle settings
       - name: Create Gradle settings
         shell: bash
         run: |
@@ -140,6 +161,7 @@ jobs:
           include(":app")
           EOF
 
+      # 9. Verify project
       - name: Verify project structure
         shell: bash
         run: |
@@ -153,14 +175,17 @@ jobs:
 
           echo "Project structure verified."
 
+      # 10. Run tests
       - name: Run Natro Mobile tests
         shell: bash
         run: bash tests/run.sh
 
+      # 11. Build APK
       - name: Build debug APK
         shell: bash
         run: gradle :app:assembleDebug --no-daemon
 
+      # 12. Verify APK
       - name: Verify APK
         shell: bash
         run: |
@@ -173,8 +198,10 @@ jobs:
             exit 1
           fi
 
+          echo "APK successfully generated:"
           ls -lh "$APK"
 
+      # 13. Upload APK
       - name: Upload Natro Mobile APK
         uses: actions/upload-artifact@v6
         with:
@@ -182,6 +209,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+      # 14. Upload test reports
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v6
