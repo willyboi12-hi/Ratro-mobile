@@ -13,37 +13,79 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build Natro Mobile APK
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
+      # 1. Download repository files
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Java
+      # 2. Configure Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: false
-
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Install Android SDK platform
+      # 3. Verify Android SDK installation
+      - name: Verify Android SDK tools
+        shell: bash
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          set -e
 
-      - name: Install Gradle
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "ERROR: Android SDK manager was not found."
+            echo "Expected: $SDKMANAGER"
+            exit 1
+          fi
+
+          echo "Android SDK found."
+          "$SDKMANAGER" --version
+
+      # 4. Accept Android SDK licenses
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+
+      # 5. Install only the required Android packages
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            --sdk_root="$ANDROID_HOME"
+
+          echo "Checking installed SDK packages..."
+
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+          test -d "$ANDROID_HOME/platform-tools"
+
+          echo "All required Android SDK packages are installed."
+
+      # 6. Configure Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Extract Natro Mobile
+      # 7. Extract uploaded Natro Mobile source ZIP
+      - name: Extract Natro Mobile source
         shell: bash
         run: |
           set -e
@@ -61,18 +103,25 @@ jobs:
           PROJECT_FILE="$(find source -type f -name build.gradle ! -path '*/app/*' -print -quit)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: Could not find the Natro Mobile root build.gradle."
+            echo "ERROR: Root build.gradle was not found."
             exit 1
           fi
 
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
 
-          cp -a "$PROJECT_DIR/build.gradle" .
-          cp -a "$PROJECT_DIR/app" .
-          cp -a "$PROJECT_DIR/gradle.properties" .
-          cp -a "$PROJECT_DIR/tests" .
+          for ITEM in build.gradle app gradle.properties tests; do
+            if [ ! -e "$PROJECT_DIR/$ITEM" ]; then
+              echo "ERROR: Missing project component: $ITEM"
+              exit 1
+            fi
+            cp -a "$PROJECT_DIR/$ITEM" .
+          done
 
+          echo "Natro Mobile source extracted successfully."
+
+      # 8. Generate Gradle settings
       - name: Create Gradle settings
+        shell: bash
         run: |
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -94,22 +143,58 @@ jobs:
           include(":app")
           EOF
 
-      - name: Run Java and sandbox tests
+      # 9. Verify project structure
+      - name: Verify project files
+        shell: bash
+        run: |
+          set -e
+
+          test -f build.gradle
+          test -f settings.gradle
+          test -f app/build.gradle
+          test -f app/src/main/AndroidManifest.xml
+          test -f tests/run.sh
+
+          echo "Project structure verified."
+
+      # 10. Run existing tests
+      - name: Run Natro Mobile tests
+        shell: bash
         run: bash tests/run.sh
 
+      # 11. Compile Android application
       - name: Build debug APK
+        shell: bash
         run: gradle :app:assembleDebug --no-daemon
 
-      - name: Upload debug APK
+      # 12. Verify APK output
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+      # 13. Upload APK
+      - name: Upload Natro Mobile APK
         uses: actions/upload-artifact@v4
         with:
           name: NatroMobile-debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
-      - name: Upload build reports
+      # 14. Upload test reports
+      - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NatroMobile-build-reports
+          name: NatroMobile-test-reports
           path: build/tests/
           if-no-files-found: ignore
