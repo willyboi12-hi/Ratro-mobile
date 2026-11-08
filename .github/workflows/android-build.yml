@@ -25,51 +25,49 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Verify Android SDK tools
+      - name: Locate Android SDK manager
         shell: bash
         run: |
           set -e
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager | sort -V | tail -n 1)"
 
-          if [ ! -x "$SDKMANAGER" ]; then
+          if [ -z "$SDKMANAGER" ]; then
             echo "ERROR: Android SDK manager not found."
             exit 1
           fi
 
-          echo "Android SDK manager detected."
-          "$SDKMANAGER" --version
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "Found Android SDK manager: $SDKMANAGER"
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -e
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          echo "Accepting Android SDK licenses..."
 
           yes | "$SDKMANAGER" --licenses
 
-          echo "Verifying license acceptance..."
-
-          "$SDKMANAGER" --licenses
+          echo "License command completed."
 
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -e
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
           "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
-            "build-tools;35.0.0"
+            "build-tools;35.0.0" \
+            --sdk_root="$ANDROID_HOME"
 
           test -d "$ANDROID_HOME/platform-tools"
           test -d "$ANDROID_HOME/platforms/android-35"
@@ -77,7 +75,7 @@ jobs:
 
           echo "Android SDK installation verified."
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -87,17 +85,19 @@ jobs:
         run: |
           set -e
 
-          ARCHIVE="$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          ARCHIVE="$(find . -maxdepth 1 -type f \
+            -name '*.zip' -print -quit)"
 
           if [ -z "$ARCHIVE" ]; then
-            echo "ERROR: Source ZIP not found in repository root."
+            echo "ERROR: Natro Mobile source ZIP not found."
             exit 1
           fi
 
           mkdir -p source
           unzip -q "$ARCHIVE" -d source
 
-          PROJECT_FILE="$(find source -type f -name build.gradle ! -path '*/app/*' -print -quit)"
+          PROJECT_FILE="$(find source -type f \
+            -name build.gradle ! -path '*/app/*' -print -quit)"
 
           if [ -z "$PROJECT_FILE" ]; then
             echo "ERROR: Root build.gradle not found."
